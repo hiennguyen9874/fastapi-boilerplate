@@ -1,0 +1,137 @@
+version: "3.3"
+
+services:
+  db:
+    image: postgres:14.0-alpine
+    volumes:
+      - app-db-data:/var/lib/postgresql/data/
+    networks:
+      - back
+    env_file:
+      - .env
+    environment:
+      - PGDATA=/var/lib/postgresql/data/pgdata
+    expose:
+      - 5432
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: fastapi.dockerfile
+
+    command: /start-reload.sh
+
+    networks:
+      - back
+      - traefik-public
+
+    env_file:
+      - .env
+
+    volumes:
+      - ./backend/app:/app
+
+    ports:
+      - 10081:80
+
+    depends_on:
+      - db
+
+    restart: unless-stopped
+
+  rabbitmq:
+    image: rabbitmq:3.9.8-management-alpine
+    environment:
+      - RABBITMQ_DEFAULT_USER=admin
+      - RABBITMQ_DEFAULT_PASS=mypass
+    networks:
+      - back
+    expose:
+      - 5672
+      - 15672
+    restart: unless-stopped
+
+  redis:
+    image: redis:6.2.6-alpine
+    networks:
+      - back
+    expose:
+      - 6379
+    restart: unless-stopped
+
+  celery:
+    build:
+      context: ./backend
+      dockerfile: celery.dockerfile
+
+    depends_on:
+      - db
+      - rabbitmq
+      - redis
+
+    networks:
+      - back
+
+    env_file:
+      - .env
+
+    restart: unless-stopped
+
+  flower:
+    image: mher/flower
+    command: celery flower --broker_api=http://admin:mypass@rabbitmq:15672/api/
+    environment:
+      - CELERY_BROKER_URL=amqp://admin:mypass@rabbitmq:5672/
+      - CELERY_RESULT_BACKEND=redis://redis:6379/
+      # - FLOWER_BASIC_AUTH=admin:admin_flower # auth will not working with prometheus
+      - FLOWER_PORT=5555
+    networks:
+      - back
+      - visualize
+      - traefik-public
+    expose:
+      - 5555
+    ports:
+      - 5555:5555
+    depends_on:
+      - rabbitmq
+      - celery
+      - redis
+    restart: unless-stopped
+
+  # https://flower.readthedocs.io/en/latest/prometheus-integration.html#celery-flower-prometheus-grafana-integration-guide
+  prometheus:
+    image: prom/prometheus
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+    expose:
+      - 9090
+    networks:
+      - visualize
+    depends_on:
+      - flower
+
+  grafana:
+    image: grafana/grafana
+    depends_on:
+      - prometheus
+    expose:
+      - 3000
+    ports:
+      - 3000:3000
+    networks:
+      - visualize
+      - traefik-public
+    volumes:
+      - grafana-storage:/var/lib/grafana
+
+networks:
+  back:
+  visualize:
+  traefik-public:
+
+volumes:
+  app-db-data:
+  app-pgadmin-data:
+  grafana-storage:
