@@ -36,7 +36,7 @@ An API Boilerplate written in python with FastAPI. Write restful API with fast d
 
 ## Start Application
 
-## SECRET_KEY
+### Secret key
 
 - `openssl rand -hex 32`
 
